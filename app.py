@@ -17,6 +17,15 @@ REQ_TIMEOUT = 10
 def is_admin():
     return session.get('logged_in') is True
 
+def get_addy_headers():
+    # X-Requested-With prevents Addy.io from returning HTML error pages
+    return {
+        "Authorization": f"Bearer {ADDY_API_KEY}",
+        "Content-Type": "application/json",
+        "X-Requested-With": "XMLHttpRequest",
+        "Accept": "application/json"
+    }
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -45,11 +54,11 @@ def auth_status():
 @app.route('/api/aliases', methods=['GET'])
 def get_aliases():
     if not is_admin(): return jsonify({"error": "Unauthorized"}), 401
-    headers = {"Authorization": f"Bearer {ADDY_API_KEY}"}
     try:
-        # Fetch all active aliases directly from Addy.io
-        res = requests.get(f"{ADDY_API_BASE}/aliases", headers=headers, timeout=REQ_TIMEOUT)
-        res.raise_for_status()
+        res = requests.get(f"{ADDY_API_BASE}/aliases", headers=get_addy_headers(), timeout=REQ_TIMEOUT)
+        if not res.ok:
+            return jsonify({"error": f"Addy API Error: {res.status_code}"}), res.status_code
+            
         return jsonify(res.json().get('data', []))
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -57,15 +66,26 @@ def get_aliases():
 @app.route('/api/aliases', methods=['POST'])
 def generate_alias():
     if not is_admin(): return jsonify({"error": "Unauthorized"}), 401
-    headers = {
-        "Authorization": f"Bearer {ADDY_API_KEY}",
-        "Content-Type": "application/json"
+    
+    # We must explicitly tell Addy which domain and format to use
+    payload = {
+        "domain": "anonaddy.me",
+        "format": "random_characters",
+        "description": "Generated via Private Render Dashboard"
     }
-    payload = {"description": "Generated via Private Render Dashboard"}
+    
     try:
-        # Ask Addy.io to generate a new random alias
-        res = requests.post(f"{ADDY_API_BASE}/aliases", json=payload, headers=headers, timeout=REQ_TIMEOUT)
-        res.raise_for_status()
+        res = requests.post(f"{ADDY_API_BASE}/aliases", json=payload, headers=get_addy_headers(), timeout=REQ_TIMEOUT)
+        
+        # Safer error handling: If Addy rejects it, grab the exact reason why
+        if not res.ok:
+            error_msg = "Unknown Error"
+            try:
+                error_msg = res.json().get('message', res.text)
+            except:
+                error_msg = res.text
+            return jsonify({"error": f"Addy.io rejected request: {error_msg}"}), res.status_code
+            
         return jsonify(res.json().get('data', {}))
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -73,11 +93,11 @@ def generate_alias():
 @app.route('/api/aliases/<alias_id>', methods=['DELETE'])
 def delete_alias(alias_id):
     if not is_admin(): return jsonify({"error": "Unauthorized"}), 401
-    headers = {"Authorization": f"Bearer {ADDY_API_KEY}"}
     try:
-        # Delete the alias permanently
-        res = requests.delete(f"{ADDY_API_BASE}/aliases/{alias_id}", headers=headers, timeout=REQ_TIMEOUT)
-        res.raise_for_status()
+        res = requests.delete(f"{ADDY_API_BASE}/aliases/{alias_id}", headers=get_addy_headers(), timeout=REQ_TIMEOUT)
+        if not res.ok:
+            return jsonify({"error": f"Failed to delete: {res.status_code}"}), res.status_code
+            
         return jsonify({"success": True})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
