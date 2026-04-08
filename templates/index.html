@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Private Alias Manager</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; margin: 0; padding: 20px; background: #1e1e2e; color: #cdd6f4; }
+        .container { max-width: 800px; margin: auto; background: #181825; padding: 30px; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        h1 { margin-top: 0; color: #b4befe; }
+        
+        .input-group { display: flex; justify-content: center; gap: 10px; margin-bottom: 10px; }
+        input { padding: 12px; font-size: 16px; border-radius: 6px; border: 1px solid #45475a; background: #313244; color: #cdd6f4; outline: none; }
+        .email-input { width: 80%; font-weight: bold; text-align: center; }
+        
+        button { padding: 10px 15px; font-size: 14px; cursor: pointer; font-weight: bold; background: #89b4fa; color: #11111b; border: none; border-radius: 6px; transition: 0.2s; }
+        button:hover { background: #74c7ec; }
+        .danger-btn { background: #f38ba8; color: #11111b; }
+        .danger-btn:hover { background: #eba0ac; }
+        
+        .controls { margin-top: 15px; display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
+        .section-box { background: #313244; padding: 15px; border-radius: 8px; margin-top: 20px; text-align: left; }
+        
+        .saved-list { display: flex; flex-direction: column; gap: 5px; margin-top: 10px; }
+        .saved-item { display: flex; justify-content: space-between; align-items: center; background: #45475a; padding: 10px; border-radius: 5px; }
+        
+        #admin-login-container { max-width: 400px; margin: 100px auto; background: #181825; padding: 40px; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        #admin-login-container input { width: 90%; margin-bottom: 15px; text-align: left; }
+        #admin-login-container button { width: 97%; padding: 12px; font-size: 16px; margin-top: 10px; }
+        
+        .notice { background: #f9e2af; color: #11111b; padding: 10px; border-radius: 6px; font-size: 14px; margin-bottom: 20px; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <div id="admin-login-container" style="display: none;">
+        <h2>Admin Login</h2>
+        <input type="text" id="admin-uname" placeholder="Username">
+        <input type="password" id="admin-pass" placeholder="Password">
+        <button onclick="adminLogin()">Login</button>
+        <p id="login-error" style="color: #f38ba8; margin-top: 15px; font-size: 14px;"></p>
+    </div>
+
+    <div class="container" id="app-container" style="display: none;">
+        <h1>Addy.io Alias Manager</h1>
+        <div class="notice">
+            🛡️ All emails sent to these aliases are automatically forwarded to your primary real inbox.
+        </div>
+        
+        <div class="input-group">
+            <input type="text" id="email-address" class="email-input" readonly placeholder="Your new alias will appear here...">
+            <button id="copy-mail-btn" onclick="copyData('email-address', 'copy-mail-btn')">Copy Mail</button>
+        </div>
+        
+        <div class="controls">
+            <button onclick="generateNewAlias()">➕ Generate New Alias</button>
+            <button onclick="renderAliases()">🔄 Sync from Addy.io</button>
+            <button class="danger-btn" onclick="adminLogout()">🚪 Logout</button>
+        </div>
+
+        <div class="section-box">
+            <h3>Active Permanent Aliases</h3>
+            <div class="saved-list" id="alias-list">
+                Syncing with Addy.io...
+            </div>
+        </div>
+    </div>
+
+    <script>
+        window.onload = async () => {
+            const res = await fetch('/api/auth/status', { cache: 'no-store' });
+            const data = await res.json();
+            if (data.logged_in) {
+                initApp();
+            } else {
+                document.getElementById('admin-login-container').style.display = 'block';
+            }
+        };
+
+        // --- Auth Functions ---
+        async function adminLogin() {
+            const uname = document.getElementById('admin-uname').value;
+            const pass = document.getElementById('admin-pass').value;
+            const err = document.getElementById('login-error');
+            
+            const res = await fetch('/api/auth/login', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({username: uname, password: pass})
+            });
+            const data = await res.json();
+            
+            if (data.success) {
+                err.innerText = "";
+                document.getElementById('admin-login-container').style.display = 'none';
+                initApp();
+            } else {
+                err.innerText = data.error;
+            }
+        }
+
+        async function adminLogout() {
+            try { await fetch('/api/auth/logout', { method: 'POST', cache: 'no-store' }); } catch(e) {}
+            window.location.replace('/');
+        }
+
+        // --- App Logic ---
+        async function initApp() {
+            document.getElementById('app-container').style.display = 'block';
+            await renderAliases();
+        }
+
+        async function generateNewAlias() {
+            document.getElementById('email-address').value = "Generating permanent alias...";
+            try {
+                const response = await fetch('/api/aliases', { method: 'POST', cache: 'no-store' });
+                const data = await response.json();
+                if (data.error) throw new Error(data.error);
+                
+                document.getElementById('email-address').value = data.email;
+                await renderAliases(); // Refresh the list below
+            } catch (error) {
+                alert("Error: " + error.message);
+            }
+        }
+
+        async function renderAliases() {
+            const list = document.getElementById('alias-list');
+            list.innerHTML = "Syncing with Addy.io...";
+            
+            const res = await fetch('/api/aliases', { cache: 'no-store' });
+            const aliases = await res.json();
+            
+            if (aliases.error) {
+                list.innerHTML = `<p style="color:#f38ba8;">Error fetching aliases.</p>`;
+                return;
+            }
+            if (aliases.length === 0) {
+                list.innerHTML = "<p style='color:#a6adc8; font-size:14px;'>No active aliases found.</p>";
+                return;
+            }
+
+            list.innerHTML = "";
+            aliases.forEach((alias) => {
+                const item = document.createElement('div');
+                item.className = 'saved-item';
+                
+                const txt = document.createElement('span');
+                txt.innerHTML = `<strong>${alias.email}</strong> <span style="font-size:12px; color:#a6adc8;">(${alias.emails_forwarded} forwarded)</span>`;
+                
+                const btnGroup = document.createElement('div');
+                
+                const cpBtn = document.createElement('button');
+                cpBtn.innerText = 'Copy';
+                cpBtn.style.padding = '5px 10px';
+                cpBtn.onclick = () => {
+                    navigator.clipboard.writeText(alias.email);
+                    cpBtn.innerText = 'Copied!';
+                    setTimeout(() => cpBtn.innerText = 'Copy', 2000);
+                };
+
+                const delBtn = document.createElement('button');
+                delBtn.className = 'danger-btn';
+                delBtn.innerText = 'X';
+                delBtn.style.padding = '5px 10px';
+                delBtn.onclick = async () => {
+                    if(confirm(`Are you sure you want to permanently delete ${alias.email}?`)) {
+                        await fetch(`/api/aliases/${alias.id}`, { method: 'DELETE', cache: 'no-store' });
+                        renderAliases();
+                    }
+                };
+
+                btnGroup.appendChild(cpBtn);
+                btnGroup.appendChild(delBtn);
+                item.appendChild(txt);
+                item.appendChild(btnGroup);
+                list.appendChild(item);
+            });
+        }
+
+        function copyData(inputId, btnId) {
+            const input = document.getElementById(inputId);
+            input.select();
+            input.setSelectionRange(0, 99999);
+            navigator.clipboard.writeText(input.value);
+            const btn = document.getElementById(btnId);
+            const originalText = btn.innerText;
+            btn.innerText = "Copied!";
+            setTimeout(() => btn.innerText = originalText, 2000);
+        }
+    </script>
+</body>
+</html>
